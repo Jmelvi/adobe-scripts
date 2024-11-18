@@ -1,0 +1,204 @@
+//Type Name Size
+var myWindow = new Window("palette", "My Window", undefined);
+myWindow.orientation = "column";
+
+var text = myWindow.add("staticText", undefined, "Upload Lyrics as Json File");
+
+var group = myWindow.add("group", undefined, "");
+group.orientation = "row";
+var buttonOne = group.add("button", undefined, "Upload");
+
+buttonOne.onClick = function () {
+  var selectedFile = File.openDialog("Select a file", "*.lrc*"); // "*.*" allows any file type
+
+  if (selectedFile !== null) {
+    var text;
+    selectedFile.open("r");
+    while (!selectedFile.eof) {
+      text = selectedFile.readln();
+      processText(text);
+    }
+    selectedFile.close();
+  } else {
+    alert("No file selected");
+    return null;
+  }
+};
+
+myWindow.center();
+myWindow.show();
+
+
+function createTextWithBackground(text, comp, compIndex) {
+    // Create the text layer
+    var tempTextLayer = comp.layers.addText(text);
+    
+    // Get the bounding box of the text
+    var textRect = tempTextLayer.sourceRectAtTime(comp.time, false); // Get text bounding box
+
+    // Delete the temporary layer
+    tempTextLayer.remove();
+
+    // Calculate precomp width and height based on the text bounding box
+    var precompWidth = Math.round(textRect.width);
+    var precompHeight = Math.round(textRect.height);
+
+    // Create a new composition for the text and the box with the same dimensions as the text box
+    var precomp = app.project.items.addComp(compIndex + "_" + text, precompWidth, precompHeight, 1, 10, 30);
+    
+    // Add the text layer to the precomp
+    var precompTextLayer = precomp.layers.addText(text);
+    
+    // Set the anchor point of the text layer to be the center of its bounding box
+    var anchorX = textRect.left + textRect.width / 2;
+    var anchorY = textRect.top + textRect.height / 2;
+    precompTextLayer.anchorPoint.setValue([anchorX, anchorY]);
+
+
+    // Create a red rectangle behind the text layer in the precomp
+    var boxLayer = precomp.layers.addShape();
+    
+    // Create the rectangle shape in the shape layer
+    var rectShape = boxLayer.content.addProperty("ADBE Vector Shape - Rect");
+    
+    // Set the size of the rectangle to match the text bounding box
+    rectShape.size.setValue([textRect.width, textRect.height]);
+
+    // Position the box layer exactly where the text layer is positioned
+    boxLayer.position.setValue([precompWidth / 2, precompHeight / 2]);
+
+    // Add fill to the rectangle and set the color to red
+    var fill = boxLayer.content.addProperty("ADBE Vector Graphic - Fill");
+    fill.color.setValue([1, 0, 0]); // RGB (1, 0, 0) is red
+
+    // Make sure the box is behind the text
+    boxLayer.moveAfter(precompTextLayer);
+
+    // Return the precomp layer (which contains both text and box)
+    return precomp;
+}
+
+function positionPrecompsInBoundingBox(comp, precompLayers) {
+    var padding = 20;              // Padding between precomps
+    var buffer = 100;              // Additional space around the bounding box
+    var maxRowHeight = 0;          // Keep track of the max height in the current row
+    var currentX = 0;              // Current X position for placing precomps
+    var currentY = 0;              // Current Y position for placing precomps
+
+    // Calculate the total width and height of the bounding box based on precomp sizes
+    var totalWidth = 0; // Total width of all precomps in a row
+    var totalHeight = 0; // Total height of all rows
+    var rowWidth = 0;    // Width of the current row
+    var rowHeight = 0;   // Height of the current row
+
+    // First, calculate the bounding box
+    for (var i = 0; i < precompLayers.length; i++) {
+        var precompLayer = precompLayers[i];
+        var precompWidth = precompLayer.width;  // Get width of the precomp
+        var precompHeight = precompLayer.height; // Get height of the precomp
+
+        // Add the width of the precomp to the row total width
+        rowWidth += precompWidth + padding; // Add padding between precomps
+        rowHeight = Math.max(rowHeight, precompHeight); // Keep track of the tallest precomp
+
+        // If the row width exceeds the main comp width, move to the next row
+        if (rowWidth > comp.width - buffer * 2) {
+            totalWidth = Math.max(totalWidth, rowWidth); // Update the total width of the bounding box
+            totalHeight += rowHeight + padding;          // Move to the next row
+            rowWidth = precompWidth + padding;           // Start a new row with the current precomp
+            rowHeight = precompHeight;                   // Start new row height with the current precomp
+        }
+    }
+    
+    // Finalize the bounding box dimensions
+    totalWidth = Math.max(totalWidth, rowWidth);
+    totalHeight += rowHeight + padding;  // Add height of the last row
+
+    // Center the bounding box inside the main composition
+    var startX = (comp.width - totalWidth) / 2; // Horizontal center of the bounding box
+    var startY = (comp.height - totalHeight) / 2; // Vertical center of the bounding box
+
+    // Now, position each precomp within the bounding box
+    currentX = startX;
+    currentY = startY;
+    var rowCount = 0;
+    for (var i = 0; i < precompLayers.length; i++) {
+        var precompLayer = precompLayers[i];
+        
+        // Add the precomp (CompItem) to the main composition as a layer
+        var precompLayerInMainComp = comp.layers.add(precompLayer); // Add precomp to the main comp as a layer
+        
+        // Get the width and height of the precomp layer (this is the actual layer in the main comp)
+        var precompWidth = precompLayerInMainComp.width;  // Use layer's width, not source.width
+        var precompHeight = precompLayerInMainComp.height; // Use layer's height, not source.height
+
+        // Position the precomp layer
+        precompLayerInMainComp.position.setValue([currentX + precompWidth / 2, currentY + precompHeight / 2]);
+
+        // Update currentX for the next precomp in the row
+        currentX += precompWidth + padding;
+
+        // If the current precomp doesn't fit in the row, move to the next row
+        if (currentX + precompWidth + padding > startX + totalWidth) {
+            // Move down to the next row and reset currentX to the starting X position
+            currentY += rowHeight + padding;
+            currentX = startX;
+            rowCount++;
+            rowHeight = precompHeight; // Reset the row height for the next row
+        }
+    }
+    var totalLayers = comp.layers.length;  // Get the total number of layers
+    var half = Math.floor(totalLayers / 2);  // Calculate the bottom half
+
+    // Loop through layers starting from the bottom (totalLayers) to the middle
+    for (var i = totalLayers; i > half; i--) {
+        var layer = comp.layer(i);
+        layer.remove();  // Remove the layer
+    }
+}
+
+function processText(t) {
+  const lines = t.split(/\\n/);
+  const regex = /^\[(\d{2}):(\d{2}\.\d{2})\](.*)$/;
+  const lyricData = [];
+  for (var i = 0; i < lines.length; i++) {
+    var match = lines[i].match(regex);
+    var minutes = parseInt(match[1], 10);
+    var seconds = parseFloat(match[2]);
+    var totalSeconds = minutes * 60 + seconds;
+    var lyrics = trim(match[3]).split(/\s+/);
+    lyricData.push({ time: totalSeconds, lyrics: lyrics });
+  }
+  //we fetch the song duration (symbolized by the last timestamp) to determine the length of the composition
+  const songDuration = lyricData[lyricData.length - 1].time;
+
+  var lyricComp = app.project.items.addComp("Lyrics", 1920, 1080, 1, songDuration, 30)
+
+  for (var i = 0; i < lyricData.length; i++) {
+    var inPoint;
+    var outPoint;
+    var text = lyricData[i].lyrics
+    var precompLayerArray = [];
+    
+    // Create a new composition to hold the precomp layers
+    if (i === 0) {
+      inPoint = 0;
+      outPoint = lyricData[i].time;
+    } else {
+      inPoint = lyricData[i - 1].time;
+      outPoint = lyricData[i].time;
+    }
+
+    var lineComp = app.project.items.addComp("Line_" + i, 1920, 1080, 1, outPoint - inPoint, 30)
+    lyricComp.layers.add(lineComp)
+
+    for (var b = 0; b < text.length; b++) {
+        var precompLayer = createTextWithBackground(text[b], lineComp , i);
+        precompLayerArray.push(precompLayer);
+        // Add the precomp layer to the main composition
+        lineComp.layers.add(precompLayer);          
+    }
+    positionPrecompsInBoundingBox(lineComp, precompLayerArray);   
+  }
+}
+
